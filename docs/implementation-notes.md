@@ -9,7 +9,7 @@
 - Selecting a project always opens a new Ghostty window at that directory. ProjectsBar no longer attempts to focus or reuse existing Ghostty windows.
 - ProjectsBar does not use Accessibility APIs, AppleScript, or Ghostty window-title mutation.
 - The menu includes a persisted `Run opencode on Open` toggle backed by `UserDefaults` key `runOpenCodeOnOpen`.
-- When `Run opencode on Open` is enabled, ProjectsBar first checks whether the selected directory is already active in Ghostty. If it is already active, it opens a normal Ghostty window without running a command. If it is not active, it launches Ghostty with `--working-directory=<path> -e opencode` via `open -na`, because Ghostty's existing-instance Service does not expose a command parameter.
+- When `Run opencode on Open` is enabled, ProjectsBar first checks whether the selected directory is already active in Ghostty. If it is already active, it opens a normal Ghostty window without running a command. If it is not active, it launches Ghostty via `open -na` with `-e /bin/zsh -lc 'cd <path> && exec opencode'`, because Ghostty's existing-instance Service does not expose a command parameter and direct `-e opencode` did not reliably preserve cwd.
 - The build script ad-hoc signs the generated `.app` bundle so the bundle identifier and `Info.plist` are bound for macOS permissions.
 - The menu shows `●` next to projects detected as active in Ghostty.
 - The menu bar status item title is `● <N>`, where `N` is the number of listed recent projects detected as active in Ghostty.

@@ -227,6 +227,7 @@ private func openGhosttyWindow(at path: String) {
 }
 
 private func openGhosttyWindowRunningOpenCode(at path: String) -> Bool {
+    let command = "cd \(shellQuoted(path)) && exec opencode"
     let result = runProcessWithStatus(
         executableURL: URL(fileURLWithPath: "/usr/bin/open"),
         arguments: [
@@ -235,11 +236,17 @@ private func openGhosttyWindowRunningOpenCode(at path: String) -> Bool {
             "--args",
             "--working-directory=\(path)",
             "-e",
-            "opencode",
+            "/bin/zsh",
+            "-lc",
+            command,
         ]
     )
     logEvent("open opencode status=\(result.status) output=\(result.output.trimmingCharacters(in: .whitespacesAndNewlines)) path=\(path)")
     return result.status == EXIT_SUCCESS
+}
+
+private func shellQuoted(_ value: String) -> String {
+    "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
 }
 
 private func openGhosttyWindowUsingService(at path: String) -> Bool {
