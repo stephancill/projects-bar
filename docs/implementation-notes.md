@@ -23,3 +23,24 @@
 - `scripts/install-login-item.sh` installs `~/Library/LaunchAgents/net.stupidtech.ProjectsBar.plist`, which opens the built app at login using LaunchAgent `RunAtLoad`.
 - `scripts/uninstall-login-item.sh` unloads and removes that LaunchAgent.
 - Process helpers drain stdout before waiting for exit to avoid deadlocking on commands with larger output, such as `ps`.
+
+## 2026-08-16
+
+- The menu now loads up to 30 recent projects and shows the most recent 10 directly. Remaining projects appear in a `More` submenu that opens when highlighted; the `More` item is omitted when there are no extra projects.
+- Each project row shows the relative time since its most recent session update (`time_updated`, stored in `Date` milliseconds), appended inline to the project name (e.g. `1m`, `2h`, `3d`, `1w`).
+
+## 2026-08-28
+
+- The project list is now read from the opencode2 `project` table instead of the legacy `session` table.
+- The query selects `worktree`, `name`, and `time_updated`, ordered by `time_updated DESC`. `worktree` is used as the project path and `time_updated` as its last activity time.
+- Projects with a non-empty `name` column are displayed using that name; otherwise the row falls back to the last path segment of `worktree`, matching previous behavior. The `global` project (worktree `/`) renders an empty label, consistent with the previous "keep everything" filtering (only non-absolute paths are skipped).
+- Rows are still parsed from the sqlite3 CLI `|`-separated output; exactly three columns are required, and NULL/empty names become `nil`.
+
+## 2026-08-28 (revision)
+
+- Corrected the source of project recency: `project.time_updated` is not a reliable "last activity" timestamp (it can lag real session activity by days), so the list is now built from `session_v2` instead.
+- The query groups `session_v2` rows by `directory`, taking the most recent `time_updated` per directory (`ROW_NUMBER() ... PARTITION BY directory`), and orders by that latest session time. `session_v2.directory` is used as the project path.
+- The optional display name is still pulled from the `project` table by joining on the project that owns the directory's latest session. In practice no `project.name` values are currently set, so rows fall back to the last path segment; the `global`-mapped directories (sessions with no dedicated project) render by their real path segment.
+- Rows are parsed from the sqlite3 CLI `|`-separated output; exactly three columns (`directory`, `name`, `time_updated`) are required.
+- Net effect: the list's order and relative times now reflect actual session activity (e.g. a project last touched today orders high), instead of the sometimes-stale `project.time_updated`.
+- The project list refreshes automatically every time the menu opens. `AppDelegate` now conforms to `NSMenuDelegate`, `menu.delegate` is set at launch, and `menuWillOpen(_:)` calls `refreshProjects()` so the shown list is always current without needing the manual `Refresh` item. The manual `Refresh` item remains available.

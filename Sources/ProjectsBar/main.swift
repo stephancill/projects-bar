@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 
 private let runOpenCodeDefaultsKey = "runOpenCodeOnOpen"
+private let maxRecentProjects = 30
 
 if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--open-ghostty-window" {
     let path = CommandLine.arguments[2]
@@ -20,17 +21,23 @@ if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--open-ghostty
 
 struct Project: Equatable {
     let path: String
+    let name: String?
+    let lastOpenedAt: Date?
 
-    var name: String {
-        URL(fileURLWithPath: path).lastPathComponent
+    var displayName: String {
+        if let name = name, !name.isEmpty {
+            return name
+        }
+        return URL(fileURLWithPath: path).lastPathComponent
     }
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private var projects: [Project] = []
+    private var moreProjects: [Project] = []
     private var activeProjectPaths = Set<String>()
     private var shouldRunOpenCodeOnOpen: Bool {
         UserDefaults.standard.bool(forKey: runOpenCodeDefaultsKey)
@@ -43,12 +50,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.title = "● 0"
         }
 
+        menu.delegate = self
         statusItem.menu = menu
         refreshProjects()
     }
 
+    func menuWillOpen(_ menu: NSMenu) {
+        refreshProjects()
+    }
+
     @objc private func refreshProjects() {
-        projects = loadRecentProjects()
+        let recent = loadRecentProjects(limit: maxRecentProjects)
+        projects = Array(recent.prefix(10))
+        moreProjects = Array(recent.dropFirst(10))
         activeProjectPaths = loadGhosttyShellWorkingDirectories()
         rebuildMenu()
         updateStatusTitle()
@@ -69,12 +83,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(item)
         } else {
             for project in projects {
-                let isActive = isGhosttyActive(for: project)
-                let item = NSMenuItem(title: "\(isActive ? "● " : "")\(project.name)", action: #selector(openProject(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = project
-                item.toolTip = project.path
-                menu.addItem(item)
+                menu.addItem(makeProjectItem(for: project))
+            }
+
+            if !moreProjects.isEmpty {
+                let moreItem = NSMenuItem(title: "More", action: nil, keyEquivalent: "")
+                moreItem.submenu = makeProjectMenu(for: moreProjects)
+                menu.addItem(moreItem)
             }
         }
 
@@ -98,29 +113,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         activeProjectPaths.contains(project.path)
     }
 
+    private func makeProjectItem(for project: Project) -> NSMenuItem {
+        let isActive = isGhosttyActive(for: project)
+        let timeSuffix = project.lastOpenedAt.map { " – \(relativeTimeString(from: $0))" } ?? ""
+        let item = NSMenuItem(title: "\(isActive ? "● " : "")\(project.displayName)\(timeSuffix)", action: #selector(openProject(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = project
+        item.toolTip = project.path
+        return item
+    }
+
+    private func makeProjectMenu(for projects: [Project]) -> NSMenu {
+        let submenu = NSMenu()
+        for project in projects {
+            submenu.addItem(makeProjectItem(for: project))
+        }
+        return submenu
+    }
+
     private func updateStatusTitle() {
         let activeCount = projects.filter(isGhosttyActive).count
         statusItem.button?.title = "● \(activeCount)"
     }
 }
 
-private func loadRecentProjects() -> [Project] {
+private func loadRecentProjects(limit: Int) -> [Project] {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     let databasePath = "\(home)/.local/share/opencode/opencode.db"
     let query = """
     SELECT
-      directory
+      s.directory,
+      p.name,
+      s.time_updated
     FROM (
       SELECT
-        s.directory,
-        s.time_updated,
-        ROW_NUMBER() OVER (PARTITION BY s.directory ORDER BY s.time_updated DESC) AS row_number
-      FROM session s
-      WHERE s.directory IS NOT NULL AND s.directory != ''
+        directory,
+        time_updated,
+        ROW_NUMBER() OVER (PARTITION BY directory ORDER BY time_updated DESC) AS row_number
+      FROM session_v2
+      WHERE directory IS NOT NULL AND directory != ''
+    ) s
+    LEFT JOIN project p ON p.id = (
+      SELECT project_id FROM session_v2 WHERE directory = s.directory ORDER BY time_updated DESC LIMIT 1
     )
-    WHERE row_number = 1
-    ORDER BY time_updated DESC
-    LIMIT 10;
+    WHERE s.row_number = 1
+    ORDER BY s.time_updated DESC
+    LIMIT \(limit);
     """
 
     let output = runProcess(
@@ -130,10 +168,16 @@ private func loadRecentProjects() -> [Project] {
 
     return output
         .split(separator: "\n")
-        .compactMap { line in
-            let path = String(line)
-            guard path.hasPrefix("/"), !path.contains("|") else { return nil }
-            return Project(path: path)
+        .compactMap { line -> Project? in
+            let parts = line.split(separator: "|", omittingEmptySubsequences: false)
+            guard parts.count == 3 else { return nil }
+            let path = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard path.hasPrefix("/") else { return nil }
+            let nameVector = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = nameVector.isEmpty ? nil : nameVector
+            let lastOpenedAt = Double(parts[2].trimmingCharacters(in: .whitespacesAndNewlines))
+                .map { Date(timeIntervalSince1970: $0 / 1000) }
+            return Project(path: path, name: name, lastOpenedAt: lastOpenedAt)
         }
 }
 
@@ -247,6 +291,18 @@ private func openGhosttyWindowRunningOpenCode(at path: String) -> Bool {
 
 private func shellQuoted(_ value: String) -> String {
     "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+}
+
+private func relativeTimeString(from date: Date) -> String {
+    let seconds = Int(Date().timeIntervalSince(date).rounded())
+    if seconds < 60 { return "\(seconds)s" }
+    let minutes = seconds / 60
+    if minutes < 60 { return "\(minutes)m" }
+    let hours = minutes / 60
+    if hours < 24 { return "\(hours)h" }
+    let days = hours / 24
+    if days < 7 { return "\(days)d" }
+    return "\(days / 7)w"
 }
 
 private func openGhosttyWindowUsingService(at path: String) -> Bool {
