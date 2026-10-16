@@ -60,7 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func refreshProjects() {
-        let recent = loadRecentProjects(limit: maxRecentProjects)
+        let recent = mergeProjects(
+            loadRecentProjects(limit: maxRecentProjects) + loadRecentClaudeProjects(),
+            limit: maxRecentProjects
+        )
         projects = Array(recent.prefix(10))
         moreProjects = Array(recent.dropFirst(10))
         activeProjectPaths = loadGhosttyShellWorkingDirectories()
@@ -78,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
 
         if projects.isEmpty {
-            let item = NSMenuItem(title: "No OpenCode Projects", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: "No Projects", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         } else {
@@ -179,6 +182,92 @@ private func loadRecentProjects(limit: Int) -> [Project] {
                 .map { Date(timeIntervalSince1970: $0 / 1000) }
             return Project(path: path, name: name, lastOpenedAt: lastOpenedAt)
         }
+}
+
+private func mergeProjects(_ projects: [Project], limit: Int) -> [Project] {
+    var byPath: [String: Project] = [:]
+    for project in projects {
+        guard let existing = byPath[project.path] else {
+            byPath[project.path] = project
+            continue
+        }
+        let existingDate = existing.lastOpenedAt ?? .distantPast
+        let projectDate = project.lastOpenedAt ?? .distantPast
+        byPath[project.path] = Project(
+            path: project.path,
+            name: existing.name ?? project.name,
+            lastOpenedAt: max(existingDate, projectDate)
+        )
+    }
+    return Array(
+        byPath.values
+            .sorted { ($0.lastOpenedAt ?? .distantPast) > ($1.lastOpenedAt ?? .distantPast) }
+            .prefix(limit)
+    )
+}
+
+/// Claude Code stores transcripts in `~/.claude/projects/<encoded-cwd>/<session>.jsonl`, where the
+/// encoded name replaces every non-alphanumeric character of the cwd with `-`. The encoding is
+/// lossy, so the real path is recovered from a `"cwd"` field whose encoding matches the folder name.
+private func loadRecentClaudeProjects() -> [Project] {
+    let fileManager = FileManager.default
+    let projectsURL = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects", isDirectory: true)
+    guard let directories = try? fileManager.contentsOfDirectory(
+        at: projectsURL,
+        includingPropertiesForKeys: [.isDirectoryKey],
+        options: [.skipsHiddenFiles]
+    ) else {
+        return []
+    }
+
+    return directories.compactMap { directoryURL -> Project? in
+        guard (try? directoryURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true,
+              let files = try? fileManager.contentsOfDirectory(
+                  at: directoryURL,
+                  includingPropertiesForKeys: [.contentModificationDateKey],
+                  options: [.skipsHiddenFiles]
+              )
+        else {
+            return nil
+        }
+
+        let transcripts = files
+            .filter { $0.pathExtension == "jsonl" }
+            .map { url in
+                (url: url, modifiedAt: (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast)
+            }
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+        guard let latest = transcripts.first else { return nil }
+
+        let encodedName = directoryURL.lastPathComponent
+        guard let path = transcripts.lazy.compactMap({ claudeWorkingDirectory(in: $0.url, matching: encodedName) }).first else {
+            logEvent("claude project skipped: no matching cwd for \(encodedName)")
+            return nil
+        }
+        return Project(path: path, name: nil, lastOpenedAt: latest.modifiedAt)
+    }
+}
+
+private func claudeWorkingDirectory(in transcriptURL: URL, matching encodedName: String) -> String? {
+    guard let handle = try? FileHandle(forReadingFrom: transcriptURL) else { return nil }
+    defer { try? handle.close() }
+    guard let data = try? handle.read(upToCount: 256 * 1024) else { return nil }
+
+    for line in data.split(separator: UInt8(ascii: "\n")) {
+        guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              let cwd = object["cwd"] as? String,
+              cwd.hasPrefix("/"),
+              encodeClaudeProjectName(cwd) == encodedName
+        else {
+            continue
+        }
+        return cwd
+    }
+    return nil
+}
+
+private func encodeClaudeProjectName(_ path: String) -> String {
+    String(path.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
 }
 
 private func loadGhosttyShellWorkingDirectories() -> Set<String> {

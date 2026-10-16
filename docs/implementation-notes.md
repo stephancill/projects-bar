@@ -44,3 +44,11 @@
 - Rows are parsed from the sqlite3 CLI `|`-separated output; exactly three columns (`directory`, `name`, `time_updated`) are required.
 - Net effect: the list's order and relative times now reflect actual session activity (e.g. a project last touched today orders high), instead of the sometimes-stale `project.time_updated`.
 - The project list refreshes automatically every time the menu opens. `AppDelegate` now conforms to `NSMenuDelegate`, `menu.delegate` is set at launch, and `menuWillOpen(_:)` calls `refreshProjects()` so the shown list is always current without needing the manual `Refresh` item. The manual `Refresh` item remains available.
+
+## 2026-10-16
+
+- Claude Code projects are now listed alongside OpenCode projects. They are read from `~/.claude/projects/<encoded-cwd>/*.jsonl`.
+- Claude encodes the project cwd in the folder name by replacing every non-alphanumeric character with `-`, which is lossy. The real path is recovered by scanning the first 256 KB of each transcript (newest first) for a JSON line whose `cwd` re-encodes to the folder name. Folders with no matching `cwd` are skipped and logged.
+- A Claude project's last activity time is the newest transcript file modification date in its folder.
+- OpenCode and Claude projects are merged by exact path (keeping the most recent time and any OpenCode `name`), sorted by recency, and capped at 30 as before.
+- The empty-state label is now `No Projects`. The `Run opencode on Open` toggle still applies to every project, including Claude ones.
