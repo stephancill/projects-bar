@@ -52,3 +52,15 @@
 - A Claude project's last activity time is the newest transcript file modification date in its folder.
 - OpenCode and Claude projects are merged by exact path (keeping the most recent time and any OpenCode `name`), sorted by recency, and capped at 30 as before.
 - The empty-state label is now `No Projects`. The `Run opencode on Open` toggle still applies to every project, including Claude ones.
+
+## 2026-10-22
+
+- Projects now open in [Scotty](https://scottyterm.com) instead of Ghostty. Ghostty support was removed entirely, including the `New Ghostty Window Here` Service, the `.projects-bar-open-here` marker file, and the self-spawned `--open-ghostty-window` helper mode.
+- Clicking a project runs Scotty's bundled CLI, `/Applications/Scotty.app/Contents/Helpers/scotty --workspace <display name> --working-directory <path>`. Scotty adds the terminal to an open workspace with that exact name, or creates one in the active window. The `global` project (empty display name) uses its path as the workspace name.
+- Scotty has no API to query or focus existing terminals, so clicking an already-open project adds another terminal to its workspace.
+- The `Run opencode on Open` toggle was replaced by `Run claude on Open`, stored under the new `UserDefaults` key `runClaudeOnOpen`. The old `runOpenCodeOnOpen` value is not migrated.
+- With `Run claude on Open` enabled and the project not active, the CLI is passed `-e /bin/zsh -lc 'exec claude'`. The login shell resolves `claude` from the user's PATH instead of Scotty's child environment; the CLI's `--working-directory` sets the cwd, so no `cd` is needed.
+- The CLI can wait up to 30 seconds for Scotty, so it runs in a detached task. A non-zero exit shows the CLI's stderr in an error alert, with no fallback.
+- Active detection now walks the process tree under `/Applications/Scotty.app/Contents/MacOS/ScottyApp` instead of Ghostty.
+- `runProcessWithStatus` now also captures stderr.
+- The CLI asks Scotty to open terminals with Apple Events, and macOS attributes those to ProjectsBar. `Info.plist` therefore declares `NSAppleEventsUsageDescription`; without it the launch failed with `Scotty rejected the launch.` macOS prompts for Automation permission the first time ProjectsBar opens a Scotty terminal.

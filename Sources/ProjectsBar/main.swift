@@ -1,23 +1,11 @@
 import AppKit
 import Foundation
 
-private let runOpenCodeDefaultsKey = "runOpenCodeOnOpen"
+private let runClaudeDefaultsKey = "runClaudeOnOpen"
 private let maxRecentProjects = 30
 
-if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--open-ghostty-window" {
-    let path = CommandLine.arguments[2]
-    let shouldRunOpenCode = CommandLine.arguments.dropFirst(3).contains("--run-opencode")
-    logEvent("helper path=\(path)")
-    let isAlreadyActive = loadGhosttyShellWorkingDirectories().contains(path)
-    let didOpen: Bool
-    if shouldRunOpenCode, !isAlreadyActive {
-        didOpen = openGhosttyWindowRunningOpenCode(at: path)
-    } else {
-        didOpen = openGhosttyWindowUsingService(at: path)
-    }
-    logEvent("helper result=\(didOpen ? "success" : "failure") path=\(path) runOpenCode=\(shouldRunOpenCode) alreadyActive=\(isAlreadyActive)")
-    exit(didOpen ? EXIT_SUCCESS : EXIT_FAILURE)
-}
+private let scottyAppPath = "/Applications/Scotty.app"
+private let scottyCLIPath = "\(scottyAppPath)/Contents/Helpers/scotty"
 
 struct Project: Equatable {
     let path: String
@@ -39,8 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var projects: [Project] = []
     private var moreProjects: [Project] = []
     private var activeProjectPaths = Set<String>()
-    private var shouldRunOpenCodeOnOpen: Bool {
-        UserDefaults.standard.bool(forKey: runOpenCodeDefaultsKey)
+    private var shouldRunClaudeOnOpen: Bool {
+        UserDefaults.standard.bool(forKey: runClaudeDefaultsKey)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -66,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         projects = Array(recent.prefix(10))
         moreProjects = Array(recent.dropFirst(10))
-        activeProjectPaths = loadGhosttyShellWorkingDirectories()
+        activeProjectPaths = loadScottyShellWorkingDirectories()
         rebuildMenu()
         updateStatusTitle()
     }
@@ -74,7 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openProject(_ sender: NSMenuItem) {
         guard let project = sender.representedObject as? Project else { return }
         logEvent("menu selected path=\(project.path)")
-        openGhosttyWindow(at: project.path)
+        let runClaude = shouldRunClaudeOnOpen && !isScottyActive(for: project)
+        openScottyTerminal(for: project, runClaude: runClaude)
     }
 
     private func rebuildMenu() {
@@ -97,27 +86,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
-        let runOpenCodeItem = NSMenuItem(title: "Run opencode on Open", action: #selector(toggleRunOpenCodeOnOpen), keyEquivalent: "")
-        runOpenCodeItem.target = self
-        runOpenCodeItem.state = shouldRunOpenCodeOnOpen ? .on : .off
-        menu.addItem(runOpenCodeItem)
+        let runClaudeItem = NSMenuItem(title: "Run claude on Open", action: #selector(toggleRunClaudeOnOpen), keyEquivalent: "")
+        runClaudeItem.target = self
+        runClaudeItem.state = shouldRunClaudeOnOpen ? .on : .off
+        menu.addItem(runClaudeItem)
         let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshProjects), keyEquivalent: "r")
         refreshItem.target = self
         menu.addItem(refreshItem)
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
-    @objc private func toggleRunOpenCodeOnOpen(_ sender: NSMenuItem) {
-        UserDefaults.standard.set(!shouldRunOpenCodeOnOpen, forKey: runOpenCodeDefaultsKey)
+    @objc private func toggleRunClaudeOnOpen(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(!shouldRunClaudeOnOpen, forKey: runClaudeDefaultsKey)
         rebuildMenu()
     }
 
-    private func isGhosttyActive(for project: Project) -> Bool {
+    private func isScottyActive(for project: Project) -> Bool {
         activeProjectPaths.contains(project.path)
     }
 
     private func makeProjectItem(for project: Project) -> NSMenuItem {
-        let isActive = isGhosttyActive(for: project)
+        let isActive = isScottyActive(for: project)
         let timeSuffix = project.lastOpenedAt.map { " – \(relativeTimeString(from: $0))" } ?? ""
         let item = NSMenuItem(title: "\(isActive ? "● " : "")\(project.displayName)\(timeSuffix)", action: #selector(openProject(_:)), keyEquivalent: "")
         item.target = self
@@ -135,7 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func updateStatusTitle() {
-        let activeCount = projects.filter(isGhosttyActive).count
+        let activeCount = projects.filter(isScottyActive).count
         statusItem.button?.title = "● \(activeCount)"
     }
 }
@@ -270,23 +259,23 @@ private func encodeClaudeProjectName(_ path: String) -> String {
     String(path.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
 }
 
-private func loadGhosttyShellWorkingDirectories() -> Set<String> {
+private func loadScottyShellWorkingDirectories() -> Set<String> {
     let rows = loadProcessRows()
-    let ghosttyPIDs = Set(
+    let scottyPIDs = Set(
         rows
-            .filter { $0.command.contains("/Applications/Ghostty.app/Contents/MacOS/ghostty") }
+            .filter { $0.command.hasPrefix("\(scottyAppPath)/Contents/MacOS/ScottyApp") }
             .map(\.pid)
     )
 
-    guard !ghosttyPIDs.isEmpty else { return [] }
+    guard !scottyPIDs.isEmpty else { return [] }
 
     var childPIDsByParent: [Int: [Int]] = [:]
     for row in rows {
         childPIDsByParent[row.parentPID, default: []].append(row.pid)
     }
 
-    var descendantPIDs = ghosttyPIDs
-    var frontier = Array(ghosttyPIDs)
+    var descendantPIDs = scottyPIDs
+    var frontier = Array(scottyPIDs)
     while let currentPID = frontier.popLast() {
         for childPID in childPIDsByParent[currentPID, default: []] where !descendantPIDs.contains(childPID) {
             descendantPIDs.insert(childPID)
@@ -338,48 +327,32 @@ private func loadProcessRows() -> [ProcessRow] {
     }
 }
 
+/// Opens a terminal in the project's named Scotty workspace via the bundled `scotty` CLI, which
+/// reuses an existing workspace with that name or creates one. The CLI can wait up to 30 seconds
+/// for Scotty to reply, so it runs off the main thread.
 @MainActor
-private func openGhosttyWindow(at path: String) {
-    let executablePath = Bundle.main.executableURL?.path ?? CommandLine.arguments[0]
-    logEvent("spawning helper executable=\(executablePath) path=\(path)")
-    var arguments = ["--open-ghostty-window", path]
-    if UserDefaults.standard.bool(forKey: runOpenCodeDefaultsKey) {
-        arguments.append("--run-opencode")
+private func openScottyTerminal(for project: Project, runClaude: Bool) {
+    let workspace = project.displayName.isEmpty ? project.path : project.displayName
+    var arguments = ["--workspace", workspace, "--working-directory", project.path]
+    if runClaude {
+        // A login shell resolves `claude` from the user's PATH rather than Scotty's child environment.
+        arguments += ["-e", "/bin/zsh", "-lc", "exec claude"]
     }
+    logEvent("scotty launch arguments=\(arguments)")
 
-    let result = runProcessWithStatus(
-        executableURL: URL(fileURLWithPath: executablePath),
-        arguments: arguments
-    )
-    logEvent("helper exited status=\(result.status) output=\(result.output.trimmingCharacters(in: .whitespacesAndNewlines)) path=\(path)")
+    Task.detached {
+        let result = runProcessWithStatus(executableURL: URL(fileURLWithPath: scottyCLIPath), arguments: arguments)
+        let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let errorOutput = result.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        logEvent("scotty exited status=\(result.status) output=\(output) error=\(errorOutput) path=\(project.path)")
 
-    guard result.status == EXIT_SUCCESS else {
-        showError(result.output.isEmpty ? "Failed to invoke Ghostty's New Ghostty Window Here service." : result.output)
-        return
+        guard result.status == EXIT_SUCCESS else {
+            await MainActor.run {
+                showError(errorOutput.isEmpty ? "Failed to open \(project.path) in Scotty (exit \(result.status))." : errorOutput)
+            }
+            return
+        }
     }
-}
-
-private func openGhosttyWindowRunningOpenCode(at path: String) -> Bool {
-    let command = "cd \(shellQuoted(path)) && exec opencode"
-    let result = runProcessWithStatus(
-        executableURL: URL(fileURLWithPath: "/usr/bin/open"),
-        arguments: [
-            "-na",
-            "/Applications/Ghostty.app",
-            "--args",
-            "--working-directory=\(path)",
-            "-e",
-            "/bin/zsh",
-            "-lc",
-            command,
-        ]
-    )
-    logEvent("open opencode status=\(result.status) output=\(result.output.trimmingCharacters(in: .whitespacesAndNewlines)) path=\(path)")
-    return result.status == EXIT_SUCCESS
-}
-
-private func shellQuoted(_ value: String) -> String {
-    "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
 }
 
 private func relativeTimeString(from date: Date) -> String {
@@ -394,19 +367,6 @@ private func relativeTimeString(from date: Date) -> String {
     return "\(days / 7)w"
 }
 
-private func openGhosttyWindowUsingService(at path: String) -> Bool {
-    let servicePath = ghosttyServicePath(forDirectory: path)
-    logEvent("service path=\(path) servicePath=\(servicePath)")
-    let pasteboard = NSPasteboard(name: NSPasteboard.Name("ProjectsBarGhosttyService.\(UUID().uuidString)"))
-    pasteboard.clearContents()
-    let didWrite = pasteboard.writeObjects([URL(fileURLWithPath: servicePath) as NSURL])
-    logEvent("pasteboard didWrite=\(didWrite) types=\(pasteboard.types?.map(\.rawValue).joined(separator: ",") ?? "")")
-
-    let didPerform = NSPerformService("New Ghostty Window Here", pasteboard)
-    logEvent("service didPerform=\(didPerform) servicePath=\(servicePath)")
-    return didPerform
-}
-
 @MainActor
 private func showError(_ message: String) {
     let alert = NSAlert()
@@ -414,31 +374,6 @@ private func showError(_ message: String) {
     alert.informativeText = message
     alert.alertStyle = .critical
     alert.runModal()
-}
-
-private func ghosttyServicePath(forDirectory path: String) -> String {
-    let fileManager = FileManager.default
-    let directoryURL = URL(fileURLWithPath: path, isDirectory: true)
-
-    if let contents = try? fileManager.contentsOfDirectory(
-        at: directoryURL,
-        includingPropertiesForKeys: [.isDirectoryKey],
-        options: [.skipsHiddenFiles]
-    ) {
-        for url in contents {
-            let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey])
-            if resourceValues?.isDirectory == false {
-                return url.path
-            }
-        }
-    }
-
-    let markerPath = directoryURL.appendingPathComponent(".projects-bar-open-here").path
-    if !fileManager.fileExists(atPath: markerPath) {
-        fileManager.createFile(atPath: markerPath, contents: nil)
-    }
-
-    return markerPath
 }
 
 private func logEvent(_ message: String) {
@@ -463,24 +398,26 @@ private func runProcess(executableURL: URL, arguments: [String]) -> String {
     runProcessWithStatus(executableURL: executableURL, arguments: arguments).output
 }
 
-private func runProcessWithStatus(executableURL: URL, arguments: [String]) -> (output: String, status: Int32) {
+private func runProcessWithStatus(executableURL: URL, arguments: [String]) -> (output: String, errorOutput: String, status: Int32) {
     let process = Process()
     let pipe = Pipe()
+    let errorPipe = Pipe()
 
     process.executableURL = executableURL
     process.arguments = arguments
     process.standardOutput = pipe
-    process.standardError = Pipe()
+    process.standardError = errorPipe
 
     do {
         try process.run()
     } catch {
-        return ("", EXIT_FAILURE)
+        return ("", "Failed to run \(executableURL.path): \(error.localizedDescription)", EXIT_FAILURE)
     }
 
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
-    return (String(data: data, encoding: .utf8) ?? "", process.terminationStatus)
+    return (String(data: data, encoding: .utf8) ?? "", String(data: errorData, encoding: .utf8) ?? "", process.terminationStatus)
 }
 
 let delegate = AppDelegate()

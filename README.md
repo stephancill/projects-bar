@@ -1,6 +1,6 @@
 # ProjectsBar
 
-A macOS menu bar app that lists your recent [OpenCode](https://opencode.ai) and [Claude Code](https://claude.com/claude-code) projects and opens them in a new [Ghostty](https://ghostty.org) window.
+A macOS menu bar app that lists your recent [OpenCode](https://opencode.ai) and [Claude Code](https://claude.com/claude-code) projects and opens them as workspaces in [Scotty](https://scottyterm.com).
 
 Native Swift/AppKit, no dependencies.
 
@@ -8,16 +8,16 @@ Native Swift/AppKit, no dependencies.
 
 - Lists recent projects from OpenCode (`~/.local/share/opencode/opencode.db`) and Claude Code (`~/.claude/projects`), merged and sorted by last activity.
 - Shows the 10 most recent projects with relative times (`5m`, `2h`, `3d`), with up to 20 more under `More`.
-- Marks projects that already have a Ghostty shell open with `●`, and shows the active count in the menu bar.
-- Clicking a project opens a new Ghostty window in that directory.
-- Optional `Run opencode on Open` toggle starts `opencode` in the new window, unless the project is already active.
+- Marks projects that already have a Scotty shell open with `●`, and shows the active count in the menu bar.
+- Clicking a project opens a terminal in that directory inside a Scotty workspace named after the project, creating the workspace if needed.
+- Optional `Run claude on Open` toggle starts `claude` in the new terminal, unless the project is already active.
 - The list refreshes every time the menu opens.
 
 ## Requirements
 
 - macOS 14 or later
 - Swift 6 toolchain (Xcode or Command Line Tools)
-- Ghostty installed at `/Applications/Ghostty.app`
+- Scotty 0.4.2 or later installed at `/Applications/Scotty.app` (uses its bundled `scotty` CLI)
 
 ## Build and run
 
@@ -37,4 +37,4 @@ scripts/uninstall-login-item.sh  # removes it
 
 ## How it works
 
-See [docs/implementation-notes.md](docs/implementation-notes.md) for details on project discovery, active-shell detection, and how Ghostty windows are opened.
+See [docs/implementation-notes.md](docs/implementation-notes.md) for details on project discovery, active-shell detection, and how Scotty terminals are opened.

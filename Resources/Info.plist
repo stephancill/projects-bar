@@ -18,5 +18,7 @@
     <string>14.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>ProjectsBar opens project terminals in Scotty.</string>
 </dict>
 </plist>
