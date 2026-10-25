@@ -67,9 +67,13 @@
 
 ## 2026-10-25
 
-- Requires Scotty 0.5.0 or later. Projects open with `scotty terminal --name <project path> --if-existing focus --workspace <display name> --working-directory <path> [-- /bin/zsh -lc 'exec claude']`.
+- Requires Scotty 0.5.0 or later. Projects open with `scotty terminal --name <project path> --if-existing focus --workspace <display name> --working-directory <path> [-- /bin/zsh -ilc claude]`.
 - Each project gets one named Scotty terminal. Clicking a project focuses that terminal (activating its window and workspace) instead of adding another one; it is created only if no terminal with that name exists in the workspace. Names persist across Scotty session restore.
 - The terminal name is the project path rather than the display name, so projects sharing a display name (and therefore a workspace) keep separate terminals.
 - A focused terminal keeps its existing directory and command, so `Run claude on Open` only takes effect when the terminal is created. ProjectsBar no longer skips `claude` for projects detected as active.
 - Terminals opened by earlier versions are unnamed and are not reused; the first click after upgrading creates a new named terminal.
 - The `●` active markers are still derived from Scotty's process tree, since Scotty has no API to list terminals.
+
+## 2026-10-25 (fix)
+
+- `Run claude on Open` failed with `zsh:1: command not found: claude`: Scotty's child environment has a minimal PATH, and a login-only shell (`zsh -lc`) does not read `~/.zshrc`, where `claude` is typically added to PATH or aliased. The command is now `/bin/zsh -ilc claude`; the interactive login shell loads `~/.zshrc` like a normal terminal, and dropping `exec` lets aliases and shell functions resolve.

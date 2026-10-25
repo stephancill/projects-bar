@@ -342,8 +342,9 @@ private func openScottyTerminal(for project: Project, runClaude: Bool) {
         "--working-directory", project.path,
     ]
     if runClaude {
-        // A login shell resolves `claude` from the user's PATH rather than Scotty's child environment.
-        arguments += ["--", "/bin/zsh", "-lc", "exec claude"]
+        // Scotty's child environment has a minimal PATH, and `claude` is typically set up in `~/.zshrc`,
+        // so run it from an interactive login shell, as if typed in a normal terminal.
+        arguments += ["--", "/bin/zsh", "-ilc", "claude"]
     }
     logEvent("scotty launch arguments=\(arguments)")
 
