@@ -64,3 +64,12 @@
 - Active detection now walks the process tree under `/Applications/Scotty.app/Contents/MacOS/ScottyApp` instead of Ghostty.
 - `runProcessWithStatus` now also captures stderr.
 - The CLI asks Scotty to open terminals with Apple Events, and macOS attributes those to ProjectsBar. `Info.plist` therefore declares `NSAppleEventsUsageDescription`; without it the launch failed with `Scotty rejected the launch.` macOS prompts for Automation permission the first time ProjectsBar opens a Scotty terminal.
+
+## 2026-10-25
+
+- Requires Scotty 0.5.0 or later. Projects open with `scotty terminal --name <project path> --if-existing focus --workspace <display name> --working-directory <path> [-- /bin/zsh -lc 'exec claude']`.
+- Each project gets one named Scotty terminal. Clicking a project focuses that terminal (activating its window and workspace) instead of adding another one; it is created only if no terminal with that name exists in the workspace. Names persist across Scotty session restore.
+- The terminal name is the project path rather than the display name, so projects sharing a display name (and therefore a workspace) keep separate terminals.
+- A focused terminal keeps its existing directory and command, so `Run claude on Open` only takes effect when the terminal is created. ProjectsBar no longer skips `claude` for projects detected as active.
+- Terminals opened by earlier versions are unnamed and are not reused; the first click after upgrading creates a new named terminal.
+- The `●` active markers are still derived from Scotty's process tree, since Scotty has no API to list terminals.

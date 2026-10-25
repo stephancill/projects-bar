@@ -62,8 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openProject(_ sender: NSMenuItem) {
         guard let project = sender.representedObject as? Project else { return }
         logEvent("menu selected path=\(project.path)")
-        let runClaude = shouldRunClaudeOnOpen && !isScottyActive(for: project)
-        openScottyTerminal(for: project, runClaude: runClaude)
+        openScottyTerminal(for: project, runClaude: shouldRunClaudeOnOpen)
     }
 
     private func rebuildMenu() {
@@ -327,16 +326,24 @@ private func loadProcessRows() -> [ProcessRow] {
     }
 }
 
-/// Opens a terminal in the project's named Scotty workspace via the bundled `scotty` CLI, which
-/// reuses an existing workspace with that name or creates one. The CLI can wait up to 30 seconds
-/// for Scotty to reply, so it runs off the main thread.
+/// Focuses the project's terminal in its Scotty workspace, or creates it, via the bundled `scotty` CLI.
+/// The terminal is named after the project path, so projects sharing a display name (and therefore a
+/// workspace) stay distinct. A focused terminal keeps its directory and command, so `claude` only
+/// runs when the terminal is created. The CLI can wait up to 30 seconds for Scotty to reply, so it
+/// runs off the main thread.
 @MainActor
 private func openScottyTerminal(for project: Project, runClaude: Bool) {
     let workspace = project.displayName.isEmpty ? project.path : project.displayName
-    var arguments = ["--workspace", workspace, "--working-directory", project.path]
+    var arguments = [
+        "terminal",
+        "--name", project.path,
+        "--if-existing", "focus",
+        "--workspace", workspace,
+        "--working-directory", project.path,
+    ]
     if runClaude {
         // A login shell resolves `claude` from the user's PATH rather than Scotty's child environment.
-        arguments += ["-e", "/bin/zsh", "-lc", "exec claude"]
+        arguments += ["--", "/bin/zsh", "-lc", "exec claude"]
     }
     logEvent("scotty launch arguments=\(arguments)")
 
